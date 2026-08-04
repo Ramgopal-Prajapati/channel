@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Relay — cross-device clipboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#12161c;
+    --panel:#181d25;
+    --panel-2:#1e242d;
+    --border:#262c36;
+    --text:#edeff2;
+    --muted:#6b7684;
+    --amber:#e8a33d;
+    --amber-dim:#8a6427;
+    --green:#4ade80;
+    --danger:#e2645c;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(ellipse at top left, rgba(232,163,61,0.06), transparent 45%),
+      var(--ink);
+    color:var(--text);
+    font-family:'Inter',system-ui,sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection{background:var(--amber);color:#12161c;}
+  button{font-family:inherit;}
+  button:focus-visible, input:focus-visible, textarea:focus-visible{
+    outline:2px solid var(--amber);
+    outline-offset:2px;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important;}
+  }
+
+  /* ---------- layout shell ---------- */
+  .app{
+    max-width:760px;
+    margin:0 auto;
+    padding:20px 18px 60px;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+  }
+
+  /* ---------- header / signal bar ---------- */
+  .signalbar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 4px 22px;
+    border-bottom:1px solid var(--border);
+    margin-bottom:22px;
+  }
+  .wordmark{
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+  }
+  .wordmark .name{
+    font-family:'Space Grotesk',sans-serif;
+    font-weight:700;
+    font-size:22px;
+    letter-spacing:0.02em;
+  }
+  .wordmark .name span{color:var(--amber);}
+  .wordmark .tag{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11px;
+    color:var(--muted);
+    letter-spacing:0.06em;
+  }
+
+  .nodes{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    position:relative;
+  }
+  .node{
+    width:9px;height:9px;border-radius:50%;
+    background:var(--panel-2);
+    border:1.5px solid var(--border);
+    transition:background .25s, border-color .25s, box-shadow .25s;
+  }
+  .node.live{
+    background:var(--green);
+    border-color:var(--green);
+    box-shadow:0 0 8px rgba(74,222,128,0.6);
+  }
+  .wire{
+    width:40px;height:1px;
+    background:repeating-linear-gradient(90deg, var(--border) 0 4px, transparent 4px 8px);
+    position:relative;
+    overflow:visible;
+  }
+  .pulse{
+    position:absolute;
+    top:-3px;left:-3px;
+    width:7px;height:7px;
+    border-radius:50%;
+    background:var(--amber);
+    box-shadow:0 0 10px rgba(232,163,61,0.9);
+    opacity:0;
+  }
+  .pulse.fire{
+    animation:travel 900ms cubic-bezier(.4,0,.2,1);
+  }
+  @keyframes travel{
+    0%{opacity:1; left:-3px;}
+    85%{opacity:1;}
+    100%{opacity:0; left:37px;}
+  }
+
+  /* ---------- join screen ---------- */
+  .join{
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:20px 0;
+  }
+  .join-card{
+    width:100%;
+    max-width:420px;
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:28px 26px 24px;
+  }
+  .join-card h1{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:20px;
+    margin:0 0 6px;
+  }
+  .join-card p.sub{
+    color:var(--muted);
+    font-size:13.5px;
+    line-height:1.5;
+    margin:0 0 22px;
+  }
+  label{
+    display:block;
+    font-size:12px;
+    color:var(--muted);
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    margin-bottom:7px;
+  }
+  .field{margin-bottom:16px;}
+  .code-row{display:flex; gap:8px;}
+  input[type=text]{
+    width:100%;
+    background:var(--panel-2);
+    border:1px solid var(--border);
+    color:var(--text);
+    font-family:'JetBrains Mono',monospace;
+    font-size:15px;
+    letter-spacing:0.04em;
+    padding:11px 12px;
+    border-radius:9px;
+  }
+  input[type=text]::placeholder{color:#454e5a;}
+  .ghost-btn{
+    background:transparent;
+    border:1px solid var(--border);
+    color:var(--muted);
+    border-radius:9px;
+    padding:0 14px;
+    font-size:12.5px;
+    cursor:pointer;
+    white-space:nowrap;
+    transition:border-color .15s, color .15s;
+  }
+  .ghost-btn:hover{border-color:var(--amber-dim); color:var(--amber);}
+  .primary-btn{
+    width:100%;
+    background:var(--amber);
+    color:#1a1204;
+    border:none;
+    border-radius:9px;
+    padding:12px 14px;
+    font-weight:600;
+    font-size:14.5px;
+    cursor:pointer;
+    margin-top:6px;
+    transition:filter .15s, transform .05s;
+  }
+  .primary-btn:hover{filter:brightness(1.08);}
+  .primary-btn:active{transform:translateY(1px);}
+  .primary-btn:disabled{opacity:0.5; cursor:not-allowed;}
+
+  .warn-note{
+    display:flex;
+    gap:8px;
+    align-items:flex-start;
+    font-size:12px;
+    color:var(--muted);
+    line-height:1.5;
+    margin-top:18px;
+    padding-top:16px;
+    border-top:1px solid var(--border);
+  }
+  .warn-note svg{flex:none; margin-top:2px;}
+
+  /* ---------- main channel view ---------- */
+  .channel-meta{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:10px;
+    margin-bottom:18px;
+  }
+  .chip{
+    font-family:'JetBrains Mono',monospace;
+    font-size:12.5px;
+    background:var(--panel-2);
+    border:1px solid var(--border);
+    color:var(--text);
+    padding:6px 11px;
+    border-radius:20px;
+    display:inline-flex;
+    align-items:center;
+    gap:7px;
+  }
+  .chip b{color:var(--amber); font-weight:600;}
+  .meta-actions{display:flex; gap:8px;}
+  .icon-btn{
+    background:transparent;
+    border:1px solid var(--border);
+    color:var(--muted);
+    border-radius:8px;
+    padding:6px 10px;
+    font-size:12px;
+    cursor:pointer;
+    transition:border-color .15s, color .15s;
+  }
+  .icon-btn:hover{border-color:var(--amber-dim); color:var(--amber);}
+
+  .panel{
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:14px;
+    padding:18px;
+    margin-bottom:20px;
+  }
+  .panel h2{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:13px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin:0 0 12px;
+  }
+  textarea{
+    width:100%;
+    min-height:88px;
+    resize:vertical;
+    background:var(--panel-2);
+    border:1px solid var(--border);
+    color:var(--text);
+    font-family:'Inter',sans-serif;
+    font-size:14.5px;
+    line-height:1.5;
+    padding:12px 13px;
+    border-radius:9px;
+  }
+  .compose-row{
+    display:flex;
+    gap:10px;
+    margin-top:12px;
+    flex-wrap:wrap;
+  }
+  .send-btn{
+    flex:1;
+    min-width:140px;
+    background:var(--amber);
+    color:#1a1204;
+    border:none;
+    border-radius:9px;
+    padding:11px 14px;
+    font-weight:600;
+    font-size:14px;
+    cursor:pointer;
+    transition:filter .15s, transform .05s;
+  }
+  .send-btn:hover{filter:brightness(1.08);}
+  .send-btn:active{transform:translateY(1px);}
+  .send-btn:disabled{opacity:0.45; cursor:not-allowed;}
+  .paste-btn{
+    background:var(--panel-2);
+    color:var(--text);
+    border:1px solid var(--border);
+    border-radius:9px;
+    padding:11px 14px;
+    font-weight:500;
+    font-size:14px;
+    cursor:pointer;
+    transition:border-color .15s;
+  }
+  .paste-btn:hover{border-color:var(--amber-dim);}
+  .hint{font-size:12px; color:var(--muted); margin-top:9px;}
+  .hint.error{color:var(--danger);}
+
+  /* ---------- log ---------- */
+  .log-head{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+  }
+  .empty{
+    text-align:center;
+    padding:38px 16px 30px;
+    color:var(--muted);
+  }
+  .empty .glyph{
+    font-family:'JetBrains Mono',monospace;
+    font-size:28px;
+    color:var(--amber-dim);
+    margin-bottom:10px;
+  }
+  .empty p{font-size:13.5px; line-height:1.6; max-width:320px; margin:0 auto;}
+
+  .item{
+    border:1px solid var(--border);
+    background:var(--panel-2);
+    border-radius:11px;
+    padding:13px 14px;
+    margin-bottom:10px;
+    animation:rise .35s ease;
+  }
+  .item:last-child{margin-bottom:0;}
+  @keyframes rise{
+    from{opacity:0; transform:translateY(-6px);}
+    to{opacity:1; transform:translateY(0);}
+  }
+  .item-top{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:8px;
+    gap:8px;
+  }
+  .item-src{
+    font-family:'JetBrains Mono',monospace;
+    font-size:11.5px;
+    color:var(--amber);
+    display:flex;
+    align-items:center;
+    gap:6px;
+  }
+  .item-src .dot{width:5px; height:5px; border-radius:50%; background:var(--amber);}
+  .item-time{font-size:11px; color:var(--muted); font-family:'JetBrains Mono',monospace;}
+  .item-content{
+    font-size:14px;
+    line-height:1.5;
+    word-break:break-word;
+    white-space:pre-wrap;
+    margin-bottom:10px;
+    max-height:160px;
+    overflow-y:auto;
+  }
+  .item-content.link{color:#8fb8e8;}
+  .item-actions{display:flex; gap:8px;}
+  .copy-btn{
+    background:transparent;
+    border:1px solid var(--border);
+    color:var(--text);
+    border-radius:7px;
+    padding:6px 12px;
+    font-size:12px;
+    cursor:pointer;
+    transition:border-color .15s, background .15s;
+  }
+  .copy-btn:hover{border-color:var(--amber-dim);}
+  .copy-btn.copied{
+    border-color:var(--green);
+    color:var(--green);
+  }
+
+  .footnote{
+    text-align:center;
+    color:var(--muted);
+    font-size:11.5px;
+    margin-top:8px;
+    line-height:1.6;
+  }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <div class="signalbar">
+    <div class="wordmark">
+      <div class="name">Re<span>lay</span></div>
+      <div class="tag">clipboard, wired across devices</div>
+    </div>
+    <div class="nodes">
+      <div class="node" id="nodeA"></div>
+      <div class="wire"><div class="pulse" id="pulseDot"></div></div>
+      <div class="node" id="nodeB"></div>
+    </div>
+  </div>
+
+  <!-- JOIN SCREEN -->
+  <div class="join" id="joinScreen">
+    <div class="join-card">
+      <h1>Open a channel</h1>
+      <p class="sub">Enter the same channel code on every device you want linked. Anything sent on one shows up on the others, in seconds.</p>
+
+      <div class="field">
+        <label for="codeInput">Channel code</label>
+        <div class="code-row">
+          <input type="text" id="codeInput" placeholder="e.g. ram-desk-42" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button class="ghost-btn" id="genBtn">Generate</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="deviceInput">This device's name</label>
+        <input type="text" id="deviceInput" placeholder="e.g. Laptop, Phone, PC" maxlength="24" autocomplete="off">
+      </div>
+
+      <button class="primary-btn" id="joinBtn">Connect this device</button>
+
+      <div class="warn-note">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span>Anyone who knows this exact code can read and send on this channel — it isn't password-protected. Pick something specific rather than a short word, and don't reuse it for anything sensitive.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHANNEL VIEW -->
+  <div id="channelView" style="display:none;">
+
+    <div class="channel-meta">
+      <div class="chip">channel <b id="codeChip"></b></div>
+      <div class="chip">this device <b id="deviceChip"></b></div>
+      <div class="meta-actions">
+        <button class="icon-btn" id="clearBtn">Clear channel</button>
+        <button class="icon-btn" id="leaveBtn">Switch channel</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Send</h2>
+      <textarea id="composeArea" placeholder="Type or paste text, a link, or anything you want to hand off to your other device…"></textarea>
+      <div class="compose-row">
+        <button class="paste-btn" id="pasteBtn">Paste from clipboard &amp; send</button>
+        <button class="send-btn" id="sendBtn">Send to channel</button>
+      </div>
+      <div class="hint" id="composeHint"></div>
+    </div>
+
+    <div class="panel">
+      <div class="log-head">
+        <h2>Transmissions</h2>
+      </div>
+      <div id="logBody">
+        <div class="empty">
+          <div class="glyph">···</div>
+          <p>Nothing on this channel yet. Send something from here, or from your other connected device.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="footnote">Checking for updates every few seconds — keep this tab open on both devices.</div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const joinScreen = $('joinScreen');
+  const channelView = $('channelView');
+  const codeInput = $('codeInput');
+  const deviceInput = $('deviceInput');
+  const genBtn = $('genBtn');
+  const joinBtn = $('joinBtn');
+  const codeChip = $('codeChip');
+  const deviceChip = $('deviceChip');
+  const clearBtn = $('clearBtn');
+  const leaveBtn = $('leaveBtn');
+  const composeArea = $('composeArea');
+  const sendBtn = $('sendBtn');
+  const pasteBtn = $('pasteBtn');
+  const composeHint = $('composeHint');
+  const logBody = $('logBody');
+  const nodeA = $('nodeA');
+  const nodeB = $('nodeB');
+  const pulseDot = $('pulseDot');
+
+  let channelCode = null;
+  let deviceName = null;
+  let items = [];
+  let pollTimer = null;
+  let lastSignature = '';
+
+  const storageKey = (code) => 'channel:' + code;
+
+  function genCode(){
+    const words = ['spark','wire','beam','echo','relay','node','link','pulse','signal','wave'];
+    const w = words[Math.floor(Math.random()*words.length)];
+    const n = Math.floor(100 + Math.random()*899);
+    return w + '-' + n;
+  }
+  genBtn.addEventListener('click', () => { codeInput.value = genCode(); });
+
+  function isLink(text){
+    return /^https?:\/\/\S+$/i.test(text.trim());
+  }
+
+  function relTime(ts){
+    const diff = Math.floor((Date.now() - ts) / 1000);
+    if(diff < 5) return 'just now';
+    if(diff < 60) return diff + 's ago';
+    if(diff < 3600) return Math.floor(diff/60) + 'm ago';
+    if(diff < 86400) return Math.floor(diff/3600) + 'h ago';
+    return Math.floor(diff/86400) + 'd ago';
+  }
+
+  function firePulse(){
+    pulseDot.classList.remove('fire');
+    void pulseDot.offsetWidth; // restart animation
+    pulseDot.classList.add('fire');
+  }
+
+  function setLive(on){
+    nodeA.classList.toggle('live', on);
+    nodeB.classList.toggle('live', on);
+  }
+
+  function render(){
+    if(items.length === 0){
+      logBody.innerHTML = '<div class="empty"><div class="glyph">···</div><p>Nothing on this channel yet. Send something from here, or from your other connected device.</p></div>';
+      return;
+    }
+    logBody.innerHTML = '';
+    items.forEach((it) => {
+      const div = document.createElement('div');
+      div.className = 'item';
+      const link = isLink(it.content);
+      div.innerHTML =
+        '<div class="item-top">' +
+          '<div class="item-src"><span class="dot"></span>' + escapeHtml(it.device || 'device') + '</div>' +
+          '<div class="item-time">' + relTime(it.ts) + '</div>' +
+        '</div>' +
+        '<div class="item-content' + (link ? ' link' : '') + '">' + escapeHtml(it.content) + '</div>' +
+        '<div class="item-actions"><button class="copy-btn" data-id="' + it.id + '">Copy</button></div>';
+      logBody.appendChild(div);
+    });
+    logBody.querySelectorAll('.copy-btn').forEach(btn => {
+      btn.addEventListener('click', () => copyItem(btn));
+    });
+  }
+
+  function escapeHtml(s){
+    const d = document.createElement('div');
+    d.innerText = s;
+    return d.innerHTML;
+  }
+
+  async function copyItem(btn){
+    const id = btn.getAttribute('data-id');
+    const it = items.find(i => i.id === id);
+    if(!it) return;
+    try{
+      await navigator.clipboard.writeText(it.content);
+      btn.textContent = 'Copied';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1600);
+    }catch(e){
+      btn.textContent = 'Select text above';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1800);
+    }
+  }
+
+  async function loadChannel(silent){
+    try{
+      const res = await window.storage.get(storageKey(channelCode), true);
+      const data = res && res.value ? JSON.parse(res.value) : [];
+      const sig = JSON.stringify(data.map(d => d.id));
+      if(sig !== lastSignature){
+        const isNewFromOther = lastSignature !== '' && data.length > 0 &&
+          (items.length === 0 || data[0].id !== items[0].id) &&
+          data[0] && data[0].device !== deviceName;
+        items = data;
+        lastSignature = sig;
+        render();
+        if(isNewFromOther) firePulse();
+      }
+      setLive(true);
+    }catch(e){
+      setLive(false);
+      if(!silent){
+        composeHint.textContent = "Couldn't reach the channel — check your connection and try again.";
+        composeHint.classList.add('error');
+      }
+    }
+  }
+
+  async function pushItem(content){
+    content = content.trim();
+    if(!content) return;
+    sendBtn.disabled = true;
+    composeHint.classList.remove('error');
+    composeHint.textContent = 'Sending…';
+    try{
+      let res;
+      try{
+        res = await window.storage.get(storageKey(channelCode), true);
+      }catch(e){
+        res = null;
+      }
+      const current = res && res.value ? JSON.parse(res.value) : [];
+      const newItem = {
+        id: Date.now() + '-' + Math.random().toString(36).slice(2,8),
+        content: content,
+        device: deviceName,
+        ts: Date.now()
+      };
+      const updated = [newItem, ...current].slice(0, 50);
+      const result = await window.storage.set(storageKey(channelCode), JSON.stringify(updated), true);
+      if(!result){
+        composeHint.textContent = 'Send failed — try again.';
+        composeHint.classList.add('error');
+      }else{
+        items = updated;
+        lastSignature = JSON.stringify(updated.map(d => d.id));
+        render();
+        composeArea.value = '';
+        composeHint.textContent = 'Sent to channel.';
+        firePulse();
+        setTimeout(() => { if(composeHint.textContent === 'Sent to channel.') composeHint.textContent=''; }, 2200);
+      }
+    }catch(e){
+      composeHint.textContent = 'Send failed — check your connection and try again.';
+      composeHint.classList.add('error');
+    }finally{
+      sendBtn.disabled = false;
+    }
+  }
+
+  sendBtn.addEventListener('click', () => pushItem(composeArea.value));
+  composeArea.addEventListener('keydown', (e) => {
+    if((e.metaKey || e.ctrlKey) && e.key === 'Enter'){ pushItem(composeArea.value); }
+  });
+
+  pasteBtn.addEventListener('click', async () => {
+    try{
+      const text = await navigator.clipboard.readText();
+      if(!text){
+        composeHint.textContent = 'Clipboard looks empty.';
+        return;
+      }
+      pushItem(text);
+    }catch(e){
+      composeHint.textContent = "Couldn't read your clipboard automatically — paste into the box instead (Ctrl/Cmd+V) and hit send.";
+      composeHint.classList.add('error');
+      composeArea.focus();
+    }
+  });
+
+  clearBtn.addEventListener('click', async () => {
+    if(!confirm('Clear all items on channel "' + channelCode + '" for every connected device?')) return;
+    try{
+      await window.storage.set(storageKey(channelCode), JSON.stringify([]), true);
+      items = [];
+      lastSignature = JSON.stringify([]);
+      render();
+    }catch(e){
+      alert('Could not clear the channel — try again.');
+    }
+  });
+
+  leaveBtn.addEventListener('click', () => {
+    if(pollTimer) clearInterval(pollTimer);
+    channelCode = null;
+    joinScreen.style.display = 'flex';
+    channelView.style.display = 'none';
+    setLive(false);
+  });
+
+  async function join(){
+    const code = codeInput.value.trim().toLowerCase().replace(/\s+/g, '-');
+    const device = deviceInput.value.trim();
+    if(!code){ codeInput.focus(); return; }
+    if(!device){ deviceInput.focus(); return; }
+    channelCode = code;
+    deviceName = device;
+    codeChip.textContent = channelCode;
+    deviceChip.textContent = deviceName;
+    joinScreen.style.display = 'none';
+    channelView.style.display = 'block';
+    lastSignature = '';
+    items = [];
+    render();
+
+    try{
+      await window.storage.set('last-session', JSON.stringify({code: channelCode, device: deviceName}), false);
+    }catch(e){ /* best effort, non-blocking */ }
+
+    await loadChannel(true);
+    if(pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => loadChannel(true), 3000);
+  }
+
+  joinBtn.addEventListener('click', join);
+  codeInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') deviceInput.focus(); });
+  deviceInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') join(); });
+
+  // Try to prefill from last session on this account (best effort)
+  (async () => {
+    try{
+      const res = await window.storage.get('last-session', false);
+      if(res && res.value){
+        const parsed = JSON.parse(res.value);
+        if(parsed.code) codeInput.value = parsed.code;
+        if(parsed.device) deviceInput.value = parsed.device;
+      }
+    }catch(e){ /* no prior session, ignore */ }
+  })();
+
+})();
+</script>
+</body>
+</html>
