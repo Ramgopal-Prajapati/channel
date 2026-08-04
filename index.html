@@ -504,8 +504,10 @@
   let items = [];
   let pollTimer = null;
   let lastSignature = '';
+  let clearedBefore = 0;
 
-  const storageKey = (code) => 'channel:' + code;
+  // Public relay backend (ntfy.sh) — works from any static host, no signup.
+  const topicFor = (code) => 'relay-ram-' + code.replace(/[^a-z0-9\-_.]/gi, '-');
 
   function genCode(){
     const words = ['spark','wire','beam','echo','relay','node','link','pulse','signal','wave'];
@@ -586,14 +588,30 @@
 
   async function loadChannel(silent){
     try{
-      const res = await window.storage.get(storageKey(channelCode), true);
-      const data = res && res.value ? JSON.parse(res.value) : [];
-      const sig = JSON.stringify(data.map(d => d.id));
+      const topic = topicFor(channelCode);
+      const resp = await fetch('https://ntfy.sh/' + topic + '/json?poll=1&since=all');
+      if(!resp.ok) throw new Error('bad status ' + resp.status);
+      const text = await resp.text();
+      const lines = text.split('\n').filter(Boolean);
+      const data = [];
+      for(const line of lines){
+        let evt;
+        try{ evt = JSON.parse(line); }catch(e){ continue; }
+        if(evt.event !== 'message') continue;
+        let payload;
+        try{ payload = JSON.parse(evt.message); }catch(e){ continue; }
+        data.push({ id: evt.id, content: payload.content, device: payload.device, ts: payload.ts || (evt.time*1000) });
+      }
+      const visible = data.filter(d => d.ts > clearedBefore);
+      visible.sort((a,b) => b.ts - a.ts);
+      const data2 = visible;
+      const capped = data.slice(0, 50);
+      const sig = JSON.stringify(capped.map(d => d.id));
       if(sig !== lastSignature){
-        const isNewFromOther = lastSignature !== '' && data.length > 0 &&
-          (items.length === 0 || data[0].id !== items[0].id) &&
-          data[0] && data[0].device !== deviceName;
-        items = data;
+        const isNewFromOther = lastSignature !== '' && capped.length > 0 &&
+          (items.length === 0 || capped[0].id !== items[0].id) &&
+          capped[0] && capped[0].device !== deviceName;
+        items = capped;
         lastSignature = sig;
         render();
         if(isNewFromOther) firePulse();
@@ -602,7 +620,7 @@
     }catch(e){
       setLive(false);
       if(!silent){
-        composeHint.textContent = "Couldn't reach the channel — check your connection and try again.";
+        composeHint.textContent = "Couldn't reach the relay — check your connection and try again.";
         composeHint.classList.add('error');
       }
     }
@@ -615,33 +633,19 @@
     composeHint.classList.remove('error');
     composeHint.textContent = 'Sending…';
     try{
-      let res;
-      try{
-        res = await window.storage.get(storageKey(channelCode), true);
-      }catch(e){
-        res = null;
-      }
-      const current = res && res.value ? JSON.parse(res.value) : [];
-      const newItem = {
-        id: Date.now() + '-' + Math.random().toString(36).slice(2,8),
-        content: content,
-        device: deviceName,
-        ts: Date.now()
-      };
-      const updated = [newItem, ...current].slice(0, 50);
-      const result = await window.storage.set(storageKey(channelCode), JSON.stringify(updated), true);
-      if(!result){
-        composeHint.textContent = 'Send failed — try again.';
-        composeHint.classList.add('error');
-      }else{
-        items = updated;
-        lastSignature = JSON.stringify(updated.map(d => d.id));
-        render();
-        composeArea.value = '';
-        composeHint.textContent = 'Sent to channel.';
-        firePulse();
-        setTimeout(() => { if(composeHint.textContent === 'Sent to channel.') composeHint.textContent=''; }, 2200);
-      }
+      const topic = topicFor(channelCode);
+      const payload = { content: content, device: deviceName, ts: Date.now() };
+      const resp = await fetch('https://ntfy.sh/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: topic, message: JSON.stringify(payload) })
+      });
+      if(!resp.ok) throw new Error('bad status ' + resp.status);
+      composeArea.value = '';
+      composeHint.textContent = 'Sent to channel.';
+      firePulse();
+      setTimeout(() => { if(composeHint.textContent === 'Sent to channel.') composeHint.textContent=''; }, 2200);
+      await loadChannel(true);
     }catch(e){
       composeHint.textContent = 'Send failed — check your connection and try again.';
       composeHint.classList.add('error');
